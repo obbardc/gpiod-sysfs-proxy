@@ -52,7 +52,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: /home/runner/yocto-downloads
-          key: yocto-downloads-${{ hashFiles('kas/ci.yml') }}
+          key: yocto-downloads-${{ hashFiles('tests/yocto/gpiod-sysfs-proxy-tests.yml') }}
           restore-keys: |
             yocto-downloads-
 
@@ -60,13 +60,13 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: /home/runner/yocto-sstate
-          key: yocto-sstate-${{ runner.arch }}-${{ hashFiles('kas/ci.yml') }}-${{ github.sha }}
+          key: yocto-sstate-${{ runner.arch }}-${{ hashFiles('tests/yocto/gpiod-sysfs-proxy-tests.yml') }}-${{ github.sha }}
           restore-keys: |
-            yocto-sstate-${{ runner.arch }}-${{ hashFiles('kas/ci.yml') }}-
+            yocto-sstate-${{ runner.arch }}-${{ hashFiles('tests/yocto/gpiod-sysfs-proxy-tests.yml') }}-
             yocto-sstate-${{ runner.arch }}-
 
       - name: Build image
-        run: kas build kas/ci.yml
+        run: kas build tests/yocto/gpiod-sysfs-proxy-tests.yml
 
       - name: Run ptests in QEMU
         timeout-minutes: 30
@@ -131,11 +131,11 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: /home/runner/yocto-downloads
-          key: yocto-downloads-${{ hashFiles('kas/ci.yml') }}
+          key: yocto-downloads-${{ hashFiles('tests/yocto/gpiod-sysfs-proxy-tests.yml') }}
 
       - name: Save sstate cache
         if: always()
         uses: actions/cache/save@v4
         with:
           path: /home/runner/yocto-sstate
-          key: yocto-sstate-${{ runner.arch }}-${{ hashFiles('kas/ci.yml') }}-${{ github.sha }}
+          key: yocto-sstate-${{ runner.arch }}-${{ hashFiles('tests/yocto/gpiod-sysfs-proxy-tests.yml') }}-${{ github.sha }}
