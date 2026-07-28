@@ -9,31 +9,43 @@ distro: poky
 
 target: core-image-minimal
 
+# Pinned to a Yocto Project release rather than tracking master. Besides the
+# obvious reproducibility, this is what makes SSTATE_MIRRORS useful: the
+# autobuilder built exactly this metadata and published the resulting shared
+# state, so most of a from-scratch build is a download rather than a compile.
+# An arbitrary master commit matches nothing on the mirror.
+#
+# To move to a newer release, bump all three yocto-* tags together and update
+# the meta-openembedded branch to the matching codename, then regenerate the
+# lockfile with `kas lock --update` (see README.md).
 repos:
   bitbake:
     url: https://git.openembedded.org/bitbake
-    branch: master
+    tag: yocto-6.0.2
     path: bitbake
     layers:
       .: disabled
 
   openembedded-core:
     url: https://git.openembedded.org/openembedded-core
-    branch: master
+    tag: yocto-6.0.2
     path: openembedded-core
     layers:
       meta:
 
   meta-yocto:
     url: https://git.yoctoproject.org/meta-yocto
-    branch: master
+    tag: yocto-6.0.2
     path: meta-yocto
     layers:
       meta-poky:
 
+  # meta-openembedded is community maintained and publishes no yocto-* tags,
+  # so it can only be tracked by its release branch. The lockfile is what
+  # actually pins it to a commit.
   meta-openembedded:
     url: https://git.openembedded.org/meta-openembedded
-    branch: master
+    branch: wrynose
     path: meta-openembedded
     layers:
       meta-oe:
@@ -92,13 +104,8 @@ local_conf_header:
     PACKAGECONFIG:append:pn-qemu-system-native = " virtfs"
 
   build: |
-    # TODO: remove this; it was for github actions
-    # Fixed paths so the GitHub Actions cache keys are stable across runs.
-    #DL_DIR = "/home/runner/yocto-downloads"
-    #SSTATE_DIR = "/home/runner/yocto-sstate"
+    # Kept outside the build directory so they survive a wipe of it, and so
+    # they can be cached independently. CI relies on these exact locations,
+    # see the DL_DIR/SSTATE_DIR variables in .github/workflows/ci.yml.
     DL_DIR = "${TOPDIR}/../downloads"
     SSTATE_DIR = "${TOPDIR}/../sstate-cache"
-
-    # TODO: remove this; it was for github actions
-    #BB_NUMBER_THREADS = "4"
-    #PARALLEL_MAKE = "-j4"

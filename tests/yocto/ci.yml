@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 Qualcomm Technologies, Inc. and/or its subsidiaries
+
+# Extra kas configuration applied only in CI. Merge it onto the main config:
+#
+#   kas build tests/yocto/gpiod-sysfs-proxy-tests.yml:tests/yocto/ci.yml
+#
+# It tunes the build for a GitHub Actions runner, which has ~25 GB of free
+# disk, 4 cores and a hard 6 hour job limit.
+
+header:
+  version: 14
+
+local_conf_header:
+  ci-mirrors: |
+    # Pull prebuilt shared state and pre-mirrored source tarballs from the
+    # Yocto Project mirrors before building anything ourselves. This is only
+    # effective because gpiod-sysfs-proxy-tests.yml pins the layers to a
+    # released tag: the mirror holds the shared state the autobuilder produced
+    # for exactly that metadata, so most of a from-scratch build is fetched
+    # rather than compiled.
+    SSTATE_MIRRORS ?= "file://.* https://sstate.yoctoproject.org/all/PATH;downloadfilename=PATH"
+    SOURCE_MIRROR_URL ?= "https://downloads.yoctoproject.org/mirror/sources/"
+    INHERIT += "own-mirrors"
+
+    # A mirror being unreachable must not fail the build; fall back to the
+    # upstream SRC_URI.
+    BB_FETCH_PREMIRRORONLY = "0"
+
+    # We cache DL_DIR as plain downloads, not as git mirror tarballs.
+    BB_GENERATE_MIRROR_TARBALLS = "0"
+
+  ci-resources: |
+    BB_NUMBER_THREADS = "4"
+    PARALLEL_MAKE = "-j 4"
+
+    # Delete each recipe's work directory once it has been packaged. The
+    # runner does not have enough disk for a full build tree, and everything
+    # worth keeping is in sstate anyway.
+    INHERIT += "rm_work"
+
+    # Stop cleanly while there is still disk left rather than failing halfway
+    # through writing an sstate object.
+    BB_DISKMON_DIRS = "\
+        STOPTASKS,${TMPDIR},1G,100K \
+        STOPTASKS,${DL_DIR},1G,100K \
+        STOPTASKS,${SSTATE_DIR},1G,100K \
+        HALT,${TMPDIR},512M,50K \
+        HALT,${DL_DIR},512M,50K \
+        HALT,${SSTATE_DIR},512M,50K"

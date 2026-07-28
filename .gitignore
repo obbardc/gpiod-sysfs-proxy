@@ -4,3 +4,11 @@
 build
 dist
 gpiod_sysfs_proxy.egg-info
+
+# Layers cloned by kas, and the build state kept alongside them.
+/bitbake
+/openembedded-core
+/meta-yocto
+/meta-openembedded
+/downloads
+/sstate-cache

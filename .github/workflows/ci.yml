@@ -8,13 +8,62 @@ on:
     #branches: [main]
   pull_request:
     #branches: [main]
+  # Keep the cache on the default branch warm. GitHub evicts cache entries
+  # that have not been read for 7 days, and only the default branch's caches
+  # are visible to pull requests from other branches.
+  schedule:
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
 
 jobs:
+  reuse:
+    name: Licensing (REUSE)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Installed from PyPI rather than via fsfe/reuse-action so that this is
+      # exactly the command a developer runs locally.
+      - name: Install reuse
+        run: pip3 install reuse
+
+      - name: Check REUSE compliance
+        run: reuse lint
+
   ptest:
     runs-on: ubuntu-22.04
-    # Full Yocto builds from a cold cache take several hours.
-    # GitHub actions cuts the runner after 6 hours; set the timeout appropriately.
+    # Serialise builds per branch: two concurrent Yocto builds would race to
+    # write the same cache entries. A build already running for an older
+    # commit is left to finish rather than cancelled, so that it still gets to
+    # save its sstate (see the incremental build notes in README.md). This is
+    # scoped to the job so that the quick licensing check above is never stuck
+    # behind a multi-hour build.
+    concurrency:
+      group: ci-ptest-${{ github.ref }}
+      cancel-in-progress: false
+    # GitHub kills the runner at 6 hours with no chance to save anything, so
+    # the job must never get that far. BUILD_TIMEOUT_MINUTES below stops
+    # bitbake early enough to leave room for the cache steps.
     timeout-minutes: 360
+
+    env:
+      KAS_CONFIG: tests/yocto/gpiod-sysfs-proxy-tests.yml:tests/yocto/ci.yml
+      # kas puts the build directory here, and the kas config derives DL_DIR
+      # and SSTATE_DIR from it as ${TOPDIR}/../{downloads,sstate-cache}.
+      KAS_BUILD_DIR: ${{ github.workspace }}/build
+      DL_DIR: ${{ github.workspace }}/downloads
+      SSTATE_DIR: ${{ github.workspace }}/sstate-cache
+      # Wall-clock budget for bitbake. The remaining ~90 minutes of the job
+      # limit covers host setup, pruning and uploading several GB of cache,
+      # and the QEMU run.
+      BUILD_TIMEOUT_MINUTES: 270
+      # The whole repository shares 10 GB of cache, and both entries below are
+      # re-uploaded every run, so leave headroom for one generation of each.
+      SSTATE_BUDGET_MB: 5000
+      DL_BUDGET_MB: 2500
 
     steps:
       - name: Checkout
@@ -49,35 +98,72 @@ jobs:
       - name: Install kas
         run: pip3 install kas
 
+      # The restore keys are deliberately loose: sstate objects are content
+      # addressed and carry their own signatures, so a stale entry can only
+      # ever be ignored by bitbake, never used incorrectly. Restoring the most
+      # recent cache from any commit is therefore strictly better than
+      # restoring nothing.
       - name: Restore downloads cache
         uses: actions/cache/restore@v4
         with:
-          path: /home/runner/yocto-downloads
-          key: yocto-downloads-${{ hashFiles('tests/yocto/gpiod-sysfs-proxy-tests.yml') }}
+          path: ${{ env.DL_DIR }}
+          key: yocto-downloads-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             yocto-downloads-
 
       - name: Restore sstate cache
         uses: actions/cache/restore@v4
         with:
-          path: /home/runner/yocto-sstate
-          key: yocto-sstate-${{ runner.arch }}-${{ hashFiles('tests/yocto/gpiod-sysfs-proxy-tests.yml') }}-${{ github.sha }}
+          path: ${{ env.SSTATE_DIR }}
+          key: yocto-sstate-${{ runner.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            yocto-sstate-${{ runner.arch }}-${{ hashFiles('tests/yocto/gpiod-sysfs-proxy-tests.yml') }}-
             yocto-sstate-${{ runner.arch }}-
 
       - name: Build image
-        run: kas build tests/yocto/gpiod-sysfs-proxy-tests.yml
+        id: build
+        run: |
+          set -o pipefail
+
+          # Cap bitbake's wall-clock time rather than letting the job hit the
+          # 6 hour limit, where the runner is destroyed and the sstate built so
+          # far is lost. SIGTERM lets bitbake wind down its running tasks;
+          # every task that has already completed has written its sstate object
+          # by then, so the next run picks up where this one stopped.
+          # SIGKILL follows if bitbake does not exit within the grace period.
+          set +e
+          timeout --signal=TERM --kill-after=10m "${BUILD_TIMEOUT_MINUTES}m" \
+            kas build "${KAS_CONFIG}"
+          rc=$?
+          set -e
+
+          case "${rc}" in
+            0)
+              echo "complete=true" >> "$GITHUB_OUTPUT"
+              ;;
+            124|137)
+              echo "complete=false" >> "$GITHUB_OUTPUT"
+              echo "::warning title=Build did not finish::bitbake was stopped" \
+                   "after ${BUILD_TIMEOUT_MINUTES} minutes. The sstate built so" \
+                   "far is being saved; re-run this job to continue."
+              ;;
+            *)
+              exit "${rc}"
+              ;;
+          esac
+
+          df -h
 
       - name: Run ptests in QEMU
+        if: steps.build.outputs.complete == 'true'
         timeout-minutes: 30
         run: |
-          # kas checks out repos next to the project directory; poky ends up
-          # in the kas work dir (defaults to $GITHUB_WORKSPACE).
-          POKY_DIR="${GITHUB_WORKSPACE}/poky"
-          BUILD_DIR="${GITHUB_WORKSPACE}/build"
-
-          source "${POKY_DIR}/oe-init-build-env" "${BUILD_DIR}"
+          # kas checks out each repo of the config next to the project
+          # directory, so oe-core (and the bitbake it locates as ../bitbake)
+          # are both under the kas work dir, which defaults to
+          # $GITHUB_WORKSPACE. Re-initialising an existing build directory
+          # keeps the conf/ that kas generated.
+          source "${GITHUB_WORKSPACE}/openembedded-core/oe-init-build-env" \
+            "${KAS_BUILD_DIR}"
 
           # Start QEMU with slirp (user-mode) networking; no root or tap device
           # needed. runqemu maps host:2222 -> guest:22 by default under slirp.
@@ -121,22 +207,51 @@ jobs:
           exit "${RC}"
 
       - name: Upload ptest results
-        if: always()
+        if: always() && steps.build.outputs.complete == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: ptest-results
           path: ptest-results.txt
 
+      # Everything below runs even when the build was cut short: saving a
+      # partial cache is the entire point of stopping early.
+      - name: Prune caches to their budgets
+        if: always()
+        run: |
+          # Drop sstate objects that have been superseded by a newer signature
+          # of the same task, then fall back to trimming by age.
+          MGMT="${GITHUB_WORKSPACE}/openembedded-core/scripts/sstate-cache-management.py"
+          if [ -f "${MGMT}" ]; then
+            python3 "${MGMT}" --cache-dir="${SSTATE_DIR}" \
+              --remove-duplicated --yes || true
+          fi
+
+          python3 .github/scripts/prune-cache.py "${SSTATE_DIR}" \
+            --budget-mb "${SSTATE_BUDGET_MB}"
+          python3 .github/scripts/prune-cache.py "${DL_DIR}" \
+            --budget-mb "${DL_BUDGET_MB}"
+
+      # The save keys embed run_id and run_attempt so that re-running a job to
+      # continue an unfinished build always writes a new entry instead of
+      # colliding with the one it restored from.
       - name: Save downloads cache
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: /home/runner/yocto-downloads
-          key: yocto-downloads-${{ hashFiles('tests/yocto/gpiod-sysfs-proxy-tests.yml') }}
+          path: ${{ env.DL_DIR }}
+          key: yocto-downloads-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Save sstate cache
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: /home/runner/yocto-sstate
-          key: yocto-sstate-${{ runner.arch }}-${{ hashFiles('tests/yocto/gpiod-sysfs-proxy-tests.yml') }}-${{ github.sha }}
+          path: ${{ env.SSTATE_DIR }}
+          key: yocto-sstate-${{ runner.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Fail if the build did not finish
+        if: always() && steps.build.outputs.complete == 'false'
+        run: |
+          echo "The build was stopped after ${BUILD_TIMEOUT_MINUTES} minutes" \
+               "so that its sstate cache could be saved." >&2
+          echo "Re-run this job; it will restore that cache and carry on." >&2
+          exit 1
