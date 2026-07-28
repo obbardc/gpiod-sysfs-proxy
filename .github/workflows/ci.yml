@@ -13,7 +13,8 @@ jobs:
   ptest:
     runs-on: ubuntu-22.04
     # Full Yocto builds from a cold cache take several hours.
-    timeout-minutes: 480
+    # GitHub actions cuts the runner after 6 hours; set the timeout appropriately.
+    timeout-minutes: 360
 
     steps:
       - name: Checkout
