@@ -67,8 +67,10 @@ def main():
     files, total = collect(args.directory)
     mib = 1024 * 1024
 
-    print(f"{args.directory}: {total // mib} MiB in {len(files)} files "
-          f"(budget {args.budget_mb} MiB)")
+    print(
+        f"{args.directory}: {total // mib} MiB in {len(files)} files "
+        f"(budget {args.budget_mb} MiB)"
+    )
 
     if total <= budget:
         return 0
@@ -88,8 +90,10 @@ def main():
         count += 1
 
     prune_empty_dirs(args.directory)
-    print(f"{args.directory}: removed {count} files, {removed // mib} MiB; "
-          f"{(total - removed) // mib} MiB left")
+    print(
+        f"{args.directory}: removed {count} files, {removed // mib} MiB; "
+        f"{(total - removed) // mib} MiB left"
+    )
     return 0
 
 
