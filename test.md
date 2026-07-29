@@ -4,6 +4,12 @@
 # TODO: move into README.md under testing heading
 
 
+When running GitHub CI for the first time, it will timeout but the sstate is cached,
+so just press "retry" on the job and the build will continue using the previous
+sstate cache.
+
+
+
 Then run:
 
 
