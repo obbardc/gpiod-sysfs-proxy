@@ -36,6 +36,7 @@ jobs:
       - name: Check REUSE compliance
         run: reuse lint
 
+  # TODO: runs `gpio-sysfs-compat-tests` on the checked out code.
   ptest:
     runs-on: ubuntu-22.04
     # Serialise builds per branch: two concurrent Yocto builds would race to
