@@ -483,7 +483,10 @@ class ValueAttr(RwAttrWithVal):
         self._pollhandle = None
 
     def read(self, fh, offset, size):
-        val = "1" if self.parent.get_value() == Value.ACTIVE else "0"
+        # TEMPORARY: deliberately inverted so that ptest fails if, and only if,
+        # the image under test was built from this checkout. Revert once the
+        # question is answered.
+        val = "0" if self.parent.get_value() == Value.ACTIVE else "1"
         data = f"{val}\n".encode()
         return data[offset : offset + size]
 
