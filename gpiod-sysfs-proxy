@@ -40,7 +40,6 @@ from gpiod.line import Direction, Edge, Value
 
 
 class Range:
-
     def __init__(self, base, size):
         self._base = base
         self._size = size
@@ -59,7 +58,6 @@ class Range:
 
 
 class RangeManager:
-
     BASE = 512
 
     def __init__(self):
@@ -133,7 +131,6 @@ def _make_entry_attr(mode, nlink, size=4096):
 
 
 class Entry:
-
     def __init__(self, parent):
         self._parent = parent
         self._attr = self._make_attr()
@@ -191,7 +188,6 @@ class Entry:
 
 
 class Directory(Entry):
-
     def __init__(self, parent):
         self._children = dict()
         Entry.__init__(self, parent)
@@ -226,7 +222,6 @@ class Directory(Entry):
 
 
 class Attribute(Entry):
-
     def _make_attr(self):
         return _make_entry_attr(stat.S_IFREG, 1)
 
@@ -235,7 +230,6 @@ class Attribute(Entry):
 
 
 class ConstRoAttr(Attribute):
-
     def __init__(self, parent, value):
         self._value = value
         Attribute.__init__(self, parent)
@@ -252,7 +246,6 @@ class ConstRoAttr(Attribute):
 
 
 class RwAttr(Attribute):
-
     def _make_attr(self):
         return _make_entry_attr(
             stat.S_IFREG | stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH,
@@ -273,7 +266,6 @@ class RwAttr(Attribute):
 
 
 class Link(Entry):
-
     def __init__(self, parent, path):
         self._path = path
         Entry.__init__(self, parent)
@@ -297,7 +289,6 @@ class Link(Entry):
 
 
 class ExportBase(RwAttr):
-
     def _make_attr(self):
         return _make_entry_attr(stat.S_IFREG | stat.S_IWUSR, 1)
 
@@ -307,7 +298,6 @@ class ExportBase(RwAttr):
 
 
 class Export(ExportBase):
-
     def do_write(self, buf):
         ExportBase.do_write(self, buf)
 
@@ -325,7 +315,6 @@ class Export(ExportBase):
 
 
 class Unexport(ExportBase):
-
     def do_write(self, buf):
         ExportBase.do_write(self, buf)
 
@@ -340,7 +329,6 @@ class Unexport(ExportBase):
 
 
 class UeventAttr(RwAttr):
-
     CMDS = "(add|remove|change|move|online|offline|bind|unbind)"
     UUID = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
     VARS = "(\\s+[A-Za-z0-9_]+\\=[A-Za-z0-9_]+)*"
@@ -355,7 +343,6 @@ class UeventAttr(RwAttr):
 
 
 class Gpiochip(Directory):
-
     def __init__(self, parent, handle, base, syspath):
         Directory.__init__(self, parent)
         self._handle = handle
@@ -398,7 +385,6 @@ class Gpiochip(Directory):
 
 
 class RwAttrWithVal(RwAttr):
-
     def __init__(self, parent, init_val):
         self._value = init_val
         RwAttr.__init__(self, parent)
@@ -413,7 +399,6 @@ class RwAttrWithVal(RwAttr):
 
 
 class DirectionAttr(RwAttrWithVal):
-
     def read(self, fh, offset, size):
         dirstr = "in" if self.value == Direction.INPUT else "out"
         data = f"{dirstr}\n".encode()
@@ -431,7 +416,6 @@ class DirectionAttr(RwAttrWithVal):
 
 
 class EdgeAttr(RwAttrWithVal):
-
     def read(self, fh, offset, size):
         if self.value == Edge.RISING:
             edgestr = "rising"
@@ -461,7 +445,6 @@ class EdgeAttr(RwAttrWithVal):
 
 
 class ActiveLowAttr(RwAttrWithVal):
-
     def read(self, fh, offset, size):
         val = "1" if self.value else "0"
         data = f"{val}\n".encode()
@@ -476,7 +459,6 @@ class ActiveLowAttr(RwAttrWithVal):
 
 
 class ValueAttr(RwAttrWithVal):
-
     def __init__(self, parent):
         RwAttrWithVal.__init__(self, parent, None)
         self._event = False
@@ -516,7 +498,6 @@ class ValueAttr(RwAttrWithVal):
 
 
 class Gpio(Directory):
-
     def __init__(self, parent, handle, info, chip):
         Directory.__init__(self, parent)
         self._handle = handle
@@ -563,7 +544,6 @@ class Gpio(Directory):
 
 
 class EventThread(Thread):
-
     def __init__(self):
         Thread.__init__(self)
         self._watched = dict()
@@ -615,7 +595,6 @@ class EventThread(Thread):
 
 
 class Root(Directory):
-
     def _make_attr(self):
         a = _make_entry_attr(
             stat.S_IFDIR
@@ -708,7 +687,6 @@ class Root(Directory):
 
 
 class GpioSysfsOperations(pyfuse3.Operations):
-
     def __init__(self, mountpoint):
         super().__init__()
         self._root = Root(mountpoint)
