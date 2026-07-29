@@ -153,6 +153,9 @@ jobs:
 
           df -h
 
+      # TODO: Yocto's own testimage class does all of this: boot, SSH readiness,
+      # ptest-runner, result collection, log capture...
+      # (TEST_SUITES = "ping ssh ptest", bitbake core-image-minimal -c testimage)
       - name: Run ptests in QEMU
         if: steps.build.outputs.complete == 'true'
         timeout-minutes: 30
@@ -165,18 +168,49 @@ jobs:
           source "${GITHUB_WORKSPACE}/openembedded-core/oe-init-build-env" \
             "${KAS_BUILD_DIR}"
 
+          CONSOLE_LOG="${GITHUB_WORKSPACE}/qemu-console.log"
+
+          # runqemu does not reliably take its qemu child down with it, and
+          # $! is the runqemu wrapper rather than qemu itself, so sweep up by
+          # name as well. The runner is thrown away afterwards, so there is no
+          # other qemu process that could be caught by this.
+          cleanup() {
+            kill "${QEMU_PID}" 2>/dev/null || true
+            pkill -f qemu-system-x86_64 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          # KVM is not available on every runner image; fall back to TCG,
+          # which boots this image in a few minutes rather than seconds.
+          ACCEL=""
+          if [ -w /dev/kvm ]; then
+            ACCEL="kvm"
+          else
+            echo "::notice title=No KVM::/dev/kvm is unavailable, emulating."
+          fi
+
           # Start QEMU with slirp (user-mode) networking; no root or tap device
           # needed. runqemu maps host:2222 -> guest:22 by default under slirp.
-          runqemu qemux86-64 nographic slirp \
-            QB_KERNEL_CMDLINE_APPEND="console=ttyS0" &
+          # nographic puts the console on ttyS0, which is captured to a log and
+          # uploaded, since a boot failure is otherwise invisible from here.
+          # stdin is closed so runqemu never blocks trying to read the console.
+          runqemu qemux86-64 core-image-minimal nographic slirp ${ACCEL} \
+            < /dev/null > "${CONSOLE_LOG}" 2>&1 &
           QEMU_PID=$!
 
           # Wait up to 5 minutes for SSH to become available.
           READY=0
           for i in $(seq 1 60); do
+            # If runqemu has already exited then the guest is never coming up;
+            # fail now instead of burning the rest of the timeout.
+            if ! kill -0 "${QEMU_PID}" 2>/dev/null; then
+              echo "runqemu exited before the guest became reachable" >&2
+              break
+            fi
             if sshpass -p "" ssh \
                 -p 2222 \
                 -o StrictHostKeyChecking=no \
+                -o UserKnownHostsFile=/dev/null \
                 -o ConnectTimeout=5 \
                 -o PasswordAuthentication=yes \
                 -o PreferredAuthentications=password \
@@ -188,30 +222,31 @@ jobs:
           done
 
           if [ "${READY}" -ne 1 ]; then
-            echo "Timed out waiting for QEMU to boot" >&2
-            kill "${QEMU_PID}" || true
+            echo "Timed out waiting for QEMU to boot; console output follows" >&2
+            cat "${CONSOLE_LOG}" >&2 || true
             exit 1
           fi
 
           sshpass -p "" ssh \
             -p 2222 \
             -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
             -o PasswordAuthentication=yes \
             -o PreferredAuthentications=password \
             root@localhost \
             ptest-runner gpiod-sysfs-proxy \
             | tee "${GITHUB_WORKSPACE}/ptest-results.txt"
-          RC=${PIPESTATUS[0]}
-
-          kill "${QEMU_PID}" || true
-          exit "${RC}"
+          exit "${PIPESTATUS[0]}"
 
       - name: Upload ptest results
         if: always() && steps.build.outputs.complete == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: ptest-results
-          path: ptest-results.txt
+          path: |
+            ptest-results.txt
+            qemu-console.log
+          if-no-files-found: warn
 
       # Everything below runs even when the build was cut short: saving a
       # partial cache is the entire point of stopping early.
