@@ -7,7 +7,8 @@ version = "1.0.2"
 description = "User-space compatibility layer for linux GPIO sysfs interface"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.6.0"
+# due to https://github.com/libfuse/pyfuse3/blob/main/pyproject.toml
+requires-python = ">=3.10"
 dependencies = [
   "pyfuse3>=3.5.0",
   "trio>=0.22.0",
@@ -25,6 +26,27 @@ Changelog = "https://github.com/brgl/gpiod-sysfs-proxy/blob/main/CHANGELOG.md"
 
 [tool.setuptools]
 packages = []
+
+[tool.ruff]
+# The daemon is an extensionless script, so ruff's default discovery (*.py,
+# *.pyi, *.ipynb) never sees it. Without this, `ruff check .` passes happily
+# while having linted nothing but .github/scripts/.
+extend-include = ["gpiod-sysfs-proxy"]
+# The longest line in the tree is already 88 characters; this only writes
+# down the convention that is being followed.
+line-length = 88
+
+[tool.ruff.lint]
+# Selected explicitly rather than left to ruff's default set, which grows
+# between releases: a new ruff would otherwise start failing CI on commits
+# that changed nothing. Bump this list deliberately.
+select = [
+  "E4",  # pycodestyle: imports
+  "E7",  # pycodestyle: statements
+  "E9",  # pycodestyle: syntax/IO errors
+  "F",   # pyflakes
+  "I",   # isort
+]
 
 [tool.setuptools.data-files]
 # Install the systemd template unit but do not enable any instance by default.

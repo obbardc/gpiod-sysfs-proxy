@@ -120,6 +120,58 @@ allow to associate a hard-coded base with a GPIO chip by its label.
 C. Officially only supports Raspberry Pi.
 
 
+## Code style
+
+The Python is linted with [ruff](https://docs.astral.sh/ruff/). Its
+configuration lives in `pyproject.toml`; run exactly what CI runs with:
+```
+pip3 install ruff==0.16.0
+ruff check .
+```
+
+Pin the same version CI uses. Ruff's default rule set grows between
+releases, so an unpinned install can report problems that CI does not, and
+vice versa.
+
+Note that `gpiod-sysfs-proxy` has no `.py` extension, so ruff would not
+normally find it. `extend-include` in `pyproject.toml` is what puts it back
+in scope — without it `ruff check .` passes while checking nothing but
+`.github/scripts/`.
+
+Most findings can be corrected automatically:
+```
+ruff check --fix .
+```
+
+### Formatting changes manually
+
+There is deliberately **no formatting gate in CI**, and you should not run
+`ruff format` across the whole tree. This repository tracks
+[upstream](https://github.com/brgl/gpiod-sysfs-proxy), and reformatting
+files wholesale creates conflicts in every one of them for as long as the
+fork lives. The existing code is close to, but not exactly, `ruff format`
+output.
+
+So format only the lines you actually touched. To see what the formatter
+would suggest, without writing anything:
+```
+ruff format --diff .
+```
+
+Then apply the parts that fall inside your own changes by hand. If a hunk is
+large enough that this is tedious, let the formatter write the file and stage
+selectively:
+```
+ruff format gpiod-sysfs-proxy
+git add -p gpiod-sysfs-proxy      # stage only your hunks
+git checkout -- gpiod-sysfs-proxy # discard the rest
+```
+
+The house style is an 88-column line limit and otherwise whatever the
+surrounding code does. When in doubt, match the neighbouring functions
+rather than the formatter.
+
+
 ## Testing
 
 To test this project, you need to build a test image first using OpenEmbedded.
@@ -145,15 +197,38 @@ makes a rebuild take minutes instead of hours.
 
 ### Continuous integration
 
-`.github/workflows/ci.yml` runs two jobs. The `reuse` job checks that every
-file carries SPDX copyright and licensing information; run the same check
-locally with:
-```
-pip3 install reuse
-reuse lint
-```
+`.github/workflows/ci.yml` runs four quick jobs and one long one.
 
-The `ptest` job builds the same image on a GitHub Actions runner and runs the
+The quick jobs all finish in a few minutes:
+
+* `lint` runs `ruff check` over the Python; see [Code style](#code-style).
+* `smoke` installs the package on a plain Ubuntu runner and runs
+  `gpiod-sysfs-proxy --version` and `--help`, across a small matrix of Python
+  versions. Both options exit before anything is mounted, so this needs
+  neither root nor a GPIO chip. It only proves that the script parses, that
+  its imports resolve and that the entry point was installed — but it is the
+  only job that proves it in minutes rather than hours.
+* `actionlint` validates the workflow files and runs `shellcheck` over every
+  `run:` block, which is where most of the shell in this repository lives.
+  Reproduce it locally by downloading the
+  [actionlint](https://github.com/rhysd/actionlint) release binary and
+  running `SHELLCHECK_OPTS=--severity=warning actionlint` from the top of the
+  tree. The severity floor suppresses info-level notes that do not survive
+  contact with shell embedded in YAML, such as shellcheck being unable to see
+  that a function is reached through `trap`.
+* `reuse` checks that every file carries SPDX copyright and licensing
+  information; run the same check locally with:
+  ```
+  pip3 install reuse
+  reuse lint
+  ```
+
+The `ptest` job `needs` all four. A cold Yocto build occupies a runner for
+hours, which is far too expensive to spend on a commit that a two-minute
+check already knows is broken. The trade-off is that a lint failure on the
+default branch also stops the weekly cache-warming run.
+
+It builds the same image on a GitHub Actions runner and runs the
 ptests in QEMU. It merges an extra kas fragment,
 `tests/yocto/ci.yml`, which adapts the build to a runner: it enables
 `rm_work` (the runner has only ~25 GB of disk), pins the parallelism to the

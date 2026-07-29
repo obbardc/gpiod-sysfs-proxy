@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2024 Bartosz Golaszewski <bartosz.golaszewski@linaro.org>
 
-# TODO: Write a bit about what this CI does.
-# TODO: Check if we actually run the checked out code 
+# Four quick jobs (lint, smoke, actionlint, reuse) gate the expensive ptest
+# build; see "Continuous integration" in README.md.
+# TODO: Check if we actually run the checked out code
 
 name: CI
 
@@ -19,6 +20,101 @@ on:
   workflow_dispatch:
 
 jobs:
+  # TODO: fix lint with `~/.local/bin/ruff format --check`
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      # Pinned deliberately: with an unpinned ruff, every ruff release is a
+      # chance for CI to fail on a commit that did not touch the code.
+      - name: Install ruff
+        run: pip3 install ruff==0.16.0
+
+      # Rules and the extensionless-script include live in pyproject.toml, so
+      # this is exactly the check a developer runs locally.
+      - name: Check
+        run: ruff check --output-format=github .
+
+  smoke:
+    name: Install and run (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    strategy:
+      # The point of the matrix is to learn which versions are broken, not
+      # just that one of them is.
+      fail-fast: false
+      matrix:
+        python-version: ['3.9', '3.13']
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # pyfuse3 and gpiod are C extensions compiled at install time against
+      # the system libraries; neither publishes a wheel that would avoid it.
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libfuse3-dev libgpiod-dev
+
+      - name: Install
+        run: pip3 install .
+
+      # --version and --help both exit before anything is mounted, so this
+      # needs neither root nor a GPIO chip. It only proves the script parses,
+      # its imports resolve and the entry point is installed -- but it is the
+      # only job that proves it in minutes rather than hours.
+      - name: Run
+        run: |
+          gpiod-sysfs-proxy --version
+          gpiod-sysfs-proxy --help
+
+  actionlint:
+    name: Workflow lint (actionlint)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      ACTIONLINT_VERSION: 1.7.12
+      # shellcheck reads this itself. Its info-level notes do not survive
+      # contact with shell embedded in YAML: it cannot see that a function is
+      # reached through `trap`, and it objects to the single quotes around
+      # every `gh --jq` expression, which are exactly what those need.
+      SHELLCHECK_OPTS: --severity=warning
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # actionlint validates workflow syntax and runs
+      # shellcheck over every `run:` block -- which is most of this file.
+      # shellcheck itself is preinstalled on GitHub's runners.
+      - name: Install actionlint
+        run: |
+          curl -fsSL \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+            | tar -xz actionlint
+
+      - name: Check workflows
+        run: ./actionlint -color
+
   reuse:
     name: Licensing (REUSE)
     runs-on: ubuntu-latest
@@ -26,7 +122,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Installed from PyPI rather than via fsfe/reuse-action so that this is
       # exactly the command a developer runs locally.
@@ -39,12 +135,21 @@ jobs:
   # TODO: runs `gpio-sysfs-compat-tests` on the checked out code.
   ptest:
     runs-on: ubuntu-22.04
+    # A multi-hour build is far too expensive to spend on a commit that a
+    # check taking a couple of minutes already knows is broken. Note that
+    # this also means a lint failure on the default branch stops the weekly
+    # cache-warming run from happening.
+    needs:
+      - lint
+      - smoke
+      - actionlint
+      - reuse
     # Serialise builds per branch: two concurrent Yocto builds would race to
     # write the same cache entries. A build already running for an older
     # commit is left to finish rather than cancelled, so that it still gets to
     # save its sstate (see the incremental build notes in README.md). This is
-    # scoped to the job so that the quick licensing check above is never stuck
-    # behind a multi-hour build.
+    # scoped to the job so that the quick checks above are never stuck behind
+    # a multi-hour build.
     concurrency:
       group: ci-ptest-${{ github.ref }}
       cancel-in-progress: false
@@ -71,7 +176,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Remove large pre-installed packages that are unused in a Yocto build.
       # This reclaims ~15 GB, bringing total available space to ~25 GB.
@@ -122,7 +227,7 @@ jobs:
       # recent cache from any commit is therefore strictly better than
       # restoring nothing.
       - name: Restore downloads cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ${{ env.DL_DIR }}
           key: yocto-downloads-${{ github.run_id }}-${{ github.run_attempt }}
@@ -130,7 +235,7 @@ jobs:
             yocto-downloads-
 
       - name: Restore sstate cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ${{ env.SSTATE_DIR }}
           key: yocto-sstate-${{ runner.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -224,7 +329,7 @@ jobs:
           # takes several minutes to reach a login prompt, and the step's own
           # timeout is the real backstop.
           READY=0
-          for i in $(seq 1 120); do
+          for _ in $(seq 1 120); do
             # If runqemu has already exited then the guest is never coming up;
             # fail now instead of burning the rest of the timeout.
             if ! kill -0 "${QEMU_PID}" 2>/dev/null; then
@@ -262,9 +367,10 @@ jobs:
             | tee "${GITHUB_WORKSPACE}/ptest-results.txt"
           exit "${PIPESTATUS[0]}"
 
+      # TODO: do we print the results too ?
       - name: Upload ptest results
         if: always() && steps.build.outputs.complete == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ptest-results
           path: |
@@ -295,14 +401,14 @@ jobs:
       # colliding with the one it restored from.
       - name: Save downloads cache
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ${{ env.DL_DIR }}
           key: yocto-downloads-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Save sstate cache
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ${{ env.SSTATE_DIR }}
           key: yocto-sstate-${{ runner.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
