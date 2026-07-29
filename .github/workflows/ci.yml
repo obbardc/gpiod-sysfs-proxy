@@ -21,7 +21,6 @@ on:
   workflow_dispatch:
 
 jobs:
-  # TODO: fix lint with `~/.local/bin/ruff format --check`
   lint:
     name: Lint (ruff)
     runs-on: ubuntu-latest
@@ -31,7 +30,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # TODO: check version
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
@@ -57,8 +55,7 @@ jobs:
       # just that one of them is.
       fail-fast: false
       matrix:
-        # TODO: check version
-        python-version: ['3.9', '3.13']
+        python-version: ['3.13', '3.14']
 
     steps:
       - name: Checkout
