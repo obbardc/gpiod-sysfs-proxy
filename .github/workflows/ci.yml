@@ -380,8 +380,13 @@ jobs:
               echo "::error title=Proxy is not under test::/sys/class/gpio is" \
                    "not a gpiod-sysfs-proxy FUSE mount, so the ptest suite" \
                    "would be exercising something else."
-              guest systemctl status gpiod-sysfs-proxy.service || true
-              guest journalctl -u gpiod-sysfs-proxy.service --no-pager || true
+              # Templated unit: the instance is the systemd-escaped mountpoint,
+              # so /sys/class/gpio is served by the sys-class-gpio instance.
+              guest systemctl status \
+                gpiod-sysfs-proxy@sys-class-gpio.service \
+                run-gpio-sys.mount sys-class.mount || true
+              guest journalctl -u gpiod-sysfs-proxy@sys-class-gpio.service \
+                --no-pager || true
               exit 1
               ;;
           esac

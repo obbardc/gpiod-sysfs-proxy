@@ -9,6 +9,8 @@ so just press "retry" on the job and the build will continue using the previous
 sstate cache.
 
 
+TODO: fix instructions to run ptest manually.
+
 
 Then run:
 
