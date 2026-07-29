@@ -20,23 +20,18 @@ try:
 except PackageNotFoundError:
     __version__ = "unknown"
 
-import pyfuse3
-import trio
 import gpiod
+import pyfuse3
 import pyudev
-
+import trio
+from gpiod.line import Direction, Edge, Value
 from pyfuse3 import (
     EntryAttributes,
     FileHandleT,
     FileInfo,
     FUSEError,
     InodeT,
-    PollHandle,
-    ReaddirToken,
-    RequestContext,
-    SetattrFields,
 )
-from gpiod.line import Direction, Edge, Value
 
 
 class Range:
