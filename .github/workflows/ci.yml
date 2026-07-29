@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2024 Bartosz Golaszewski <bartosz.golaszewski@linaro.org>
 
+# TODO: Write a bit about what this CI does.
+# TODO: Check if we actually run the checked out code 
+
 name: CI
 
 on:
@@ -94,6 +97,20 @@ jobs:
             libegl1-mesa libsdl1.2-dev python3-subunit mesa-common-dev \
             zstd liblz4-tool file locales libacl1 sshpass
           sudo locale-gen en_US.UTF-8
+
+      # GitHub's Linux runners expose /dev/kvm, but as root:kvm 0660, and the
+      # runner user's group membership is not picked up by the already-running
+      # job. The udev rule relaxes the mode so runqemu can use hardware
+      # acceleration; without it the guest falls back to TCG and boots an
+      # order of magnitude slower. Non-fatal: a runner without /dev/kvm at all
+      # still works, just slowly.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm || true
 
       - name: Install kas
         run: pip3 install kas
@@ -193,14 +210,20 @@ jobs:
           # needed. runqemu maps host:2222 -> guest:22 by default under slirp.
           # nographic puts the console on ttyS0, which is captured to a log and
           # uploaded, since a boot failure is otherwise invisible from here.
+          # The fstype is named explicitly rather than left to runqemu's
+          # search of the deploy directory; see IMAGE_FSTYPES in
+          # tests/yocto/gpiod-sysfs-proxy-tests.yml.
           # stdin is closed so runqemu never blocks trying to read the console.
-          runqemu qemux86-64 core-image-minimal nographic slirp ${ACCEL} \
+          runqemu qemux86-64 core-image-minimal ext4 nographic slirp ${ACCEL} \
             < /dev/null > "${CONSOLE_LOG}" 2>&1 &
           QEMU_PID=$!
 
-          # Wait up to 5 minutes for SSH to become available.
+          # Wait up to 10 minutes for SSH to become available. That is far
+          # longer than a KVM boot needs, but without acceleration the guest
+          # takes several minutes to reach a login prompt, and the step's own
+          # timeout is the real backstop.
           READY=0
-          for i in $(seq 1 60); do
+          for i in $(seq 1 120); do
             # If runqemu has already exited then the guest is never coming up;
             # fail now instead of burning the rest of the timeout.
             if ! kill -0 "${QEMU_PID}" 2>/dev/null; then

@@ -100,6 +100,14 @@ local_conf_header:
 
     IMAGE_FEATURES += "ssh-server-openssh"
 
+  image: |
+    # Uncompressed, and only what runqemu needs. Recent oe-core defaults the
+    # qemu machines to a zstd-compressed rootfs, which runqemu refuses to boot
+    # unless it is given "snapshot" (it will not decompress an image it may
+    # write to). Booting the ext4 in place also avoids keeping a second,
+    # decompressed copy of the rootfs on a disk-constrained CI runner.
+    IMAGE_FSTYPES = "ext4"
+
   qemu-virtfs: |
     PACKAGECONFIG:append:pn-qemu-system-native = " virtfs"
 
