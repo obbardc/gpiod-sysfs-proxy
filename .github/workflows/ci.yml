@@ -3,7 +3,8 @@
 
 # Four quick jobs (lint, smoke, actionlint, reuse) gate the expensive ptest
 # build; see "Continuous integration" in README.md.
-# TODO: Check if we actually run the checked out code
+# The ptest job asserts that /sys/class/gpio is a gpiod-sysfs-proxy FUSE mount
+# before running the suite, so a green run really did test this checkout.
 
 name: CI
 
@@ -30,6 +31,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      # TODO: check version
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
@@ -55,6 +57,7 @@ jobs:
       # just that one of them is.
       fail-fast: false
       matrix:
+        # TODO: check version
         python-version: ['3.9', '3.13']
 
     steps:
@@ -132,7 +135,8 @@ jobs:
       - name: Check REUSE compliance
         run: reuse lint
 
-  # TODO: runs `gpio-sysfs-compat-tests` on the checked out code.
+  # Runs `gpio-sysfs-compat-tests` against the checked out code, built into a
+  # Yocto image by tests/yocto/recipes-support/gpiod-sysfs-proxy/*.bbappend.
   ptest:
     runs-on: ubuntu-22.04
     # A multi-hour build is far too expensive to spend on a commit that a
@@ -356,16 +360,48 @@ jobs:
             exit 1
           fi
 
-          sshpass -p "" ssh \
-            -p 2222 \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            -o PasswordAuthentication=yes \
-            -o PreferredAuthentications=password \
-            root@localhost \
-            ptest-runner gpiod-sysfs-proxy \
+          guest() {
+            sshpass -p "" ssh \
+              -p 2222 \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o PasswordAuthentication=yes \
+              -o PreferredAuthentications=password \
+              root@localhost "$@"
+          }
+
+          # The suite only checks that /sys/class/gpio is there and usable, so
+          # it passes just as happily against a kernel built with
+          # CONFIG_GPIO_SYSFS as against the proxy. Confirm what is actually
+          # serving the mountpoint before believing any result from it.
+          MOUNTLINE="$(guest "grep -F ' /sys/class/gpio ' /proc/mounts" || true)"
+          echo "/sys/class/gpio is served by: ${MOUNTLINE:-<nothing>}"
+          case "${MOUNTLINE}" in
+            gpiod-sysfs-proxy\ /sys/class/gpio\ fuse*)
+              ;;
+            *)
+              echo "::error title=Proxy is not under test::/sys/class/gpio is" \
+                   "not a gpiod-sysfs-proxy FUSE mount, so the ptest suite" \
+                   "would be exercising something else."
+              guest systemctl status gpiod-sysfs-proxy.service || true
+              guest journalctl -u gpiod-sysfs-proxy.service --no-pager || true
+              exit 1
+              ;;
+          esac
+
+          set +e
+          guest ptest-runner gpiod-sysfs-proxy \
             | tee "${GITHUB_WORKSPACE}/ptest-results.txt"
-          exit "${PIPESTATUS[0]}"
+          rc="${PIPESTATUS[0]}"
+          set -e
+
+          # ptest-runner only relays one PASS/FAIL line per suite; run-ptest
+          # leaves the unittest output behind on the target. Fetch it so a
+          # failure is diagnosable without rebuilding the image.
+          guest "cat /usr/lib/gpiod-sysfs-proxy/ptest/tests/gpio-sysfs-compat-tests.out" \
+            > "${GITHUB_WORKSPACE}/gpio-sysfs-compat-tests.out" || true
+
+          exit "${rc}"
 
       # TODO: do we print the results too ?
       - name: Upload ptest results
@@ -375,6 +411,7 @@ jobs:
           name: ptest-results
           path: |
             ptest-results.txt
+            gpio-sysfs-compat-tests.out
             qemu-console.log
           if-no-files-found: warn
 

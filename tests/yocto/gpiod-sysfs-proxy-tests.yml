@@ -70,10 +70,14 @@ local_conf_header:
     INIT_MANAGER = "systemd"
 
   kernel: |
+    # Deliberately no features/gpio/sysfs.scc: that enables CONFIG_GPIO_SYSFS,
+    # which is the interface the proxy exists to replace. With it on, the
+    # kernel provides /sys/class/gpio itself, the two mount units ship a
+    # ConditionPathExists=!/sys/class/gpio and skip, and the ptest suite passes
+    # against the kernel without ever reaching the code under test.
     KERNEL_FEATURES:append = " \
         features/gpio/sim.scc \
         features/gpio/mockup.scc \
-        features/gpio/sysfs.scc \
         features/overlayfs/overlayfs.scc \
     "
 
