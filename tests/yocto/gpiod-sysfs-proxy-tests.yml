@@ -92,7 +92,9 @@ local_conf_header:
 
     #IMAGE_INSTALL:append = " python3-gpiod"
 
-    # TODO: make it install the source from this repo
+    # The recipe comes from meta-openembedded and would build the release on
+    # PyPI; tests/yocto/recipes-support/gpiod-sysfs-proxy/*.bbappend points it
+    # at this checkout instead.
     IMAGE_INSTALL:append = " gpiod-sysfs-proxy"
     PACKAGECONFIG:append:pn-gpiod-sysfs-proxy = " sys-class-mount"
 
