@@ -371,15 +371,30 @@ jobs:
           # it passes just as happily against a kernel built with
           # CONFIG_GPIO_SYSFS as against the proxy. Confirm what is actually
           # serving the mountpoint before believing any result from it.
-          MOUNTLINE="$(guest "grep -F ' /sys/class/gpio ' /proc/mounts" || true)"
+          # sshd and the proxy are both wanted by multi-user.target and are
+          # not ordered against each other, and the proxy is Type=simple, so
+          # systemd calls it started as soon as python3 execs -- a moment
+          # before pyfuse3 publishes the mount. The guest can therefore answer
+          # SSH while /proc/mounts still has nothing at /sys/class/gpio, so
+          # poll instead of deciding on the first reading.
+          MOUNTLINE=""
+          for _ in $(seq 1 30); do
+            MOUNTLINE="$(guest "grep -F ' /sys/class/gpio ' /proc/mounts" || true)"
+            case "${MOUNTLINE}" in
+              gpiod-sysfs-proxy\ /sys/class/gpio\ fuse*) break ;;
+            esac
+            sleep 2
+          done
+
           echo "/sys/class/gpio is served by: ${MOUNTLINE:-<nothing>}"
           case "${MOUNTLINE}" in
             gpiod-sysfs-proxy\ /sys/class/gpio\ fuse*)
               ;;
             *)
-              echo "::error title=Proxy is not under test::/sys/class/gpio is" \
-                   "not a gpiod-sysfs-proxy FUSE mount, so the ptest suite" \
-                   "would be exercising something else."
+              echo "::error title=Proxy is not under test::/sys/class/gpio did" \
+                   "not become a gpiod-sysfs-proxy FUSE mount within 60" \
+                   "seconds, so the ptest suite would be exercising something" \
+                   "else."
               # Templated unit: the instance is the systemd-escaped mountpoint,
               # so /sys/class/gpio is served by the sys-class-gpio instance.
               guest systemctl status \
