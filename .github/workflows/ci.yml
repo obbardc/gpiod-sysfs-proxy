@@ -291,6 +291,17 @@ jobs:
       # 2026-07-31T21:30
       # STOP: ptest-runner
       # TOTAL: 1 FAIL: 0
+
+      # PASS looks like this:
+      # START: ptest-runner
+      # 2026-08-01T02:22
+      # BEGIN: /usr/lib/gpiod-sysfs-proxy/ptest
+      # PASS: gpio-sysfs-compat-tests
+      # DURATION: 10
+      # END: /usr/lib/gpiod-sysfs-proxy/ptest
+      # 2026-08-01T02:23
+      # STOP: ptest-runner
+      # TOTAL: 1 FAIL: 0
       - name: Run ptests in QEMU
         if: steps.build.outputs.complete == 'true'
         timeout-minutes: 30
