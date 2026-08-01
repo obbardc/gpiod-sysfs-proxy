@@ -280,6 +280,17 @@ jobs:
       # TODO: Yocto's own testimage class does all of this: boot, SSH readiness,
       # ptest-runner, result collection, log capture...
       # (TEST_SUITES = "ping ssh ptest", bitbake core-image-minimal -c testimage)
+
+      # TODO: With `HACK: make gpiod-sysfs-proxy return bad values` it fails BUT reports pass...
+      # START: ptest-runner
+      # 2026-07-31T21:30
+      # BEGIN: /usr/lib/gpiod-sysfs-proxy/ptest
+      # FAIL: gpio-sysfs-compat-tests
+      # DURATION: 7
+      # END: /usr/lib/gpiod-sysfs-proxy/ptest
+      # 2026-07-31T21:30
+      # STOP: ptest-runner
+      # TOTAL: 1 FAIL: 0
       - name: Run ptests in QEMU
         if: steps.build.outputs.complete == 'true'
         timeout-minutes: 30
