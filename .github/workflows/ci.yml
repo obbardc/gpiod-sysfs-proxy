@@ -281,27 +281,6 @@ jobs:
       # ptest-runner, result collection, log capture...
       # (TEST_SUITES = "ping ssh ptest", bitbake core-image-minimal -c testimage)
 
-      # TODO: With `HACK: make gpiod-sysfs-proxy return bad values` it fails BUT reports pass...
-      # START: ptest-runner
-      # 2026-07-31T21:30
-      # BEGIN: /usr/lib/gpiod-sysfs-proxy/ptest
-      # FAIL: gpio-sysfs-compat-tests
-      # DURATION: 7
-      # END: /usr/lib/gpiod-sysfs-proxy/ptest
-      # 2026-07-31T21:30
-      # STOP: ptest-runner
-      # TOTAL: 1 FAIL: 0
-
-      # PASS looks like this:
-      # START: ptest-runner
-      # 2026-08-01T02:22
-      # BEGIN: /usr/lib/gpiod-sysfs-proxy/ptest
-      # PASS: gpio-sysfs-compat-tests
-      # DURATION: 10
-      # END: /usr/lib/gpiod-sysfs-proxy/ptest
-      # 2026-08-01T02:23
-      # STOP: ptest-runner
-      # TOTAL: 1 FAIL: 0
       - name: Run ptests in QEMU
         if: steps.build.outputs.complete == 'true'
         timeout-minutes: 30
@@ -428,9 +407,11 @@ jobs:
               ;;
           esac
 
+          RESULTS="${GITHUB_WORKSPACE}/ptest-results.txt"
+          SUITE_OUT="${GITHUB_WORKSPACE}/gpio-sysfs-compat-tests.out"
+
           set +e
-          guest ptest-runner gpiod-sysfs-proxy \
-            | tee "${GITHUB_WORKSPACE}/ptest-results.txt"
+          guest ptest-runner gpiod-sysfs-proxy | tee "${RESULTS}"
           rc="${PIPESTATUS[0]}"
           set -e
 
@@ -438,11 +419,43 @@ jobs:
           # leaves the unittest output behind on the target. Fetch it so a
           # failure is diagnosable without rebuilding the image.
           guest "cat /usr/lib/gpiod-sysfs-proxy/ptest/tests/gpio-sysfs-compat-tests.out" \
-            > "${GITHUB_WORKSPACE}/gpio-sysfs-compat-tests.out" || true
+            > "${SUITE_OUT}" || true
 
-          exit "${rc}"
+          # The exit status is not the result. ptest-runner only counts a suite
+          # as failed when its run-ptest script exits non-zero, and
+          # meta-openembedded's run-ptest ends with `echo "FAIL: $testbin"` --
+          # which succeeds. A failing suite therefore still exits 0 and is
+          # summarised as "TOTAL: 1 FAIL: 0". The PASS:/FAIL: lines are the
+          # only real result, which is why Yocto's own ptest handling parses
+          # the log; do the same here. The status is still honoured on top,
+          # since it does catch ssh or ptest-runner itself falling over.
+          #
+          # Anchoring matters twice over: the trailing "TOTAL: 1 FAIL: 0"
+          # contains FAIL, and requiring the PASS line means a suite that never
+          # ran at all -- an empty log, a missing ptest package -- is a failure
+          # rather than a silent pass.
+          ok=1
+          if [ "${rc}" -ne 0 ]; then
+            echo "ptest-runner exited with status ${rc}" >&2
+            ok=0
+          fi
+          if grep -Eq '^(FAIL|TIMEOUT|ERROR):' "${RESULTS}"; then
+            ok=0
+          fi
+          if ! grep -Eq '^PASS: gpio-sysfs-compat-tests[[:space:]]*$' "${RESULTS}"; then
+            echo "no PASS line for gpio-sysfs-compat-tests in the ptest log" >&2
+            ok=0
+          fi
 
-      # TODO: do we print the results too ?
+          if [ "${ok}" -ne 1 ]; then
+            echo "::error title=ptest failed::gpio-sysfs-compat-tests did not" \
+                 "pass. The suite output follows and is also uploaded as the" \
+                 "ptest-results artifact."
+            echo "----- gpio-sysfs-compat-tests.out -----"
+            cat "${SUITE_OUT}" || true
+            exit 1
+          fi
+
       - name: Upload ptest results
         if: always() && steps.build.outputs.complete == 'true'
         uses: actions/upload-artifact@v7
